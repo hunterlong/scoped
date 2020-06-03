@@ -1,6 +1,7 @@
 package scoped_test
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/hunterlong/scoped"
 	"github.com/stretchr/testify/assert"
@@ -73,8 +74,9 @@ func decodeMulti(val []byte) []Example {
 	return e
 }
 
-func exampleHandler(w http.ResponseWriter, r *http.Request) interface{} {
-	return example
+func exampleHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := context.WithValue(r.Context(), "scope", "admin")
+	scoped.NewContext(ctx, example)
 }
 
 func TestHttp(t *testing.T) {
@@ -83,12 +85,14 @@ func TestHttp(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	handler := scoped.Handler("admin", exampleHandler)
+	handler := scoped.New("admin", example)
 	handler.ServeHTTP(rr, req)
 
 	d, _ := ioutil.ReadAll(rr.Body)
 
 	example := decode(d)
+
+	t.Log(string(d))
 
 	assert.Equal(t, int64(1), example.ID)
 	assert.Equal(t, "im an admin", example.AdminOnlyStr)

@@ -2,46 +2,72 @@ package scoped
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"reflect"
 	"strings"
 )
 
-type JsonTagger struct {
+type Scoped struct {
 	scope  string
 	buffer *bytes.Buffer
 }
 
-func (j *JsonTagger) AsJSON() []byte {
+type HandlerFunc func(w http.ResponseWriter, r *http.Request) interface{}
+
+func (j *Scoped) AsJSON() []byte {
 	return j.buffer.Bytes()
 }
 
-func New(scope string, data interface{}) *JsonTagger {
-	out := &JsonTagger{
+func (j *Scoped) HttpResponder(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(j.buffer.Bytes())
+}
+
+func NewContext(ctx context.Context, data interface{}) *Scoped {
+	scope, ok := ctx.Value("scope").(string)
+	if !ok {
+		return nil
+	}
+	return New(scope, data)
+}
+
+func New(scope string, data interface{}) *Scoped {
+	out := &Scoped{
 		scope:  scope,
 		buffer: bytes.NewBuffer(nil),
 	}
 	return out.scopeAll(data)
 }
 
-func (j *JsonTagger) Read(p []byte) (n int, err error) {
+func (j *Scoped) Read(p []byte) (n int, err error) {
 	return j.buffer.Read(p)
 }
 
-func (j *JsonTagger) Write(p []byte) (n int, err error) {
+func (j *Scoped) Write(p []byte) (n int, err error) {
 	return j.buffer.Write(p)
 }
 
-func Handler(scope string, handler func(w http.ResponseWriter, r *http.Request) interface{}) http.Handler {
+func (j *Scoped) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Write(j.buffer.Bytes())
+}
+
+func Handler(handler HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		out := New(scope, handler(w, r))
+		scope, ok := r.Context().Value("scope").(string)
+		if !ok {
+			handler(w, r)
+			return
+		}
+		data := handler(w, r)
+		out := New(scope, data)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(out.buffer.Bytes())
 	})
 }
 
-func (j *JsonTagger) scopeAll(data interface{}) *JsonTagger {
+func (j *Scoped) scopeAll(data interface{}) *Scoped {
 	val := reflect.ValueOf(data)
 
 	if val.Kind() == reflect.Slice {
@@ -57,12 +83,12 @@ func (j *JsonTagger) scopeAll(data interface{}) *JsonTagger {
 	return j
 }
 
-func (j *JsonTagger) marshalWrite(data interface{}) {
+func (j *Scoped) marshalWrite(data interface{}) {
 	jD, _ := json.Marshal(data)
 	j.Write(jD)
 }
 
-func (j *JsonTagger) extractData(data interface{}) map[string]interface{} {
+func (j *Scoped) extractData(data interface{}) map[string]interface{} {
 	val := reflect.ValueOf(data)
 
 	if val.Kind() == reflect.Ptr {
